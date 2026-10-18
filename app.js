@@ -123,7 +123,13 @@ function shuffle(list) {
   return a;
 }
 
-const formatSize = (bytes) => (bytes >= 1048576 ? `${(bytes / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`);
+const formatSize = (bytes) => {
+  if (bytes >= 1073741824) return `${(bytes / 1073741824).toFixed(2)} GB`;
+  if (bytes >= 1048576) return `${(bytes / 1048576).toFixed(1)} MB`;
+  return `${Math.max(bytes ? 1 : 0, Math.round(bytes / 1024))} KB`;
+};
+const PAGES_LIMIT = 1073741824; // GitHub Pages: published site max 1 GB
+const sizeOf = (photos) => photos.reduce((sum, p) => sum + (p.size || 0), 0);
 
 async function fetchMeta() {
   try {
@@ -347,6 +353,45 @@ function renderSidebar(albums) {
     ? tags.map(tagButton)
     : [el('p', 'hint', 'Henüz etiket yok. Bir albümü düzenleyip ekleyebilirsin.')]));
   $('#clearFilters').hidden = !filterActive();
+  renderStorage();
+}
+
+function setMeter(meter, bytes) {
+  const ratio = bytes / PAGES_LIMIT;
+  meter.firstElementChild.style.width = `${Math.min(100, Math.max(ratio > 0 ? 1 : 0, ratio * 100))}%`;
+  meter.classList.toggle('warn', ratio >= 0.8);
+}
+
+function renderStorage() {
+  const used = sizeOf(state.photos);
+  $('#storageUsed').textContent = formatSize(used);
+  setMeter($('#storageBar').parentElement, used);
+}
+
+async function renderStorageDetail() {
+  const used = sizeOf(state.photos);
+  const avg = state.photos.length ? used / state.photos.length : 0;
+  setMeter($('#stBar').parentElement, used);
+  $('#stPhotos').textContent = `${formatSize(used)} · ${state.photos.length} fotoğraf (%${((used / PAGES_LIMIT) * 100).toFixed(1)})`;
+  $('#stLeft').textContent = avg
+    ? `${formatSize(Math.max(0, PAGES_LIMIT - used))} · ~${Math.floor(Math.max(0, PAGES_LIMIT - used) / avg).toLocaleString('tr-TR')} fotoğraf`
+    : formatSize(PAGES_LIMIT);
+  $('#stHint').textContent = used / PAGES_LIMIT >= 0.8
+    ? 'Yer dolmak üzere! Fotoğrafları ayrı bir repoya taşımayı düşünebilirsin.'
+    : 'GitHub Pages sitesi en fazla 1 GB olabilir. Silinen fotoğraflar repo geçmişinde yer kaplamaya devam eder.';
+
+  try {
+    const { usage } = await navigator.storage.estimate();
+    $('#stDevice').textContent = formatSize(usage || 0);
+  } catch {
+    $('#stDevice').textContent = '—';
+  }
+  try {
+    const info = await gh(''); // GitHub reports repo size in KB, including history
+    $('#stRepo').textContent = info.size != null ? formatSize(info.size * 1024) : '—';
+  } catch {
+    $('#stRepo').textContent = '—';
+  }
 }
 
 function albumCard(a) {
@@ -532,7 +577,7 @@ function renderAlbum(albums) {
 
   $('#albumTitle').textContent = unsorted ? 'Albümsüz' : name;
   $('#editAlbumBtn').hidden = unsorted;
-  const meta = [el('span', '', `${state.view.length} fotoğraf`)];
+  const meta = [el('span', '', `${state.view.length} fotoğraf · ${formatSize(sizeOf(state.view))}`)];
   if (album?.category) {
     const badge = el('button', 'badge', album.category);
     badge.type = 'button';
@@ -949,7 +994,10 @@ function openSettings() {
   f.branch.value = config.branch;
   f.token.value = config.token;
   $('#settings').showModal();
+  renderStorageDetail();
 }
+
+$('#storageMore').addEventListener('click', openSettings);
 
 $('#settingsForm').addEventListener('submit', async (e) => {
   e.preventDefault();

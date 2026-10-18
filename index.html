@@ -68,6 +68,12 @@
         <div class="tags" id="tagList"></div>
       </section>
       <button class="link-btn" id="clearFilters" type="button" hidden>Filtreleri temizle</button>
+      <section class="storage">
+        <h3 class="side-title">Depolama</h3>
+        <div class="meter"><div id="storageBar"></div></div>
+        <p class="storage-text"><b id="storageUsed">0 KB</b> / 1 GB kullanıldı</p>
+        <button class="link-btn" id="storageMore" type="button">Ayrıntılar</button>
+      </section>
     </aside>
     <div class="scrim" id="scrim" hidden></div>
 
@@ -291,6 +297,17 @@
         <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">Fine-grained token oluştur</a>:
         sadece bu repoyu seç, <b>Contents → Read and write</b> izni ver. Token yalnızca bu cihazda saklanır.
       </p>
+      <section class="storage-detail" id="storageDetail">
+        <h3>Depolama</h3>
+        <div class="meter"><div id="stBar"></div></div>
+        <dl class="facts">
+          <div><dt>Fotoğraflar</dt><dd id="stPhotos">—</dd></div>
+          <div><dt>Repo (silinenler dahil)</dt><dd id="stRepo">—</dd></div>
+          <div><dt>Bu cihazdaki önbellek</dt><dd id="stDevice">—</dd></div>
+          <div><dt>Tahmini kalan yer</dt><dd id="stLeft">—</dd></div>
+        </dl>
+        <p class="hint" id="stHint">GitHub Pages sitesi en fazla 1 GB olabilir. Silinen fotoğraflar repo geçmişinde yer kaplamaya devam eder.</p>
+      </section>
       <div class="dialog-actions">
         <button class="btn" type="button" id="settingsCancel">Vazgeç</button>
         <button class="btn primary" type="submit">Kaydet</button>

@@ -78,7 +78,8 @@ class Handler(SimpleHTTPRequestHandler):
         if rest is None:
             return super().do_GET()
         if rest == '':
-            return self.send_json(200, {'permissions': {'push': self.authorized()}})
+            size_kb = sum(p.stat().st_size for p in STORE.rglob('*') if p.is_file()) // 1024 if STORE.exists() else 0
+            return self.send_json(200, {'permissions': {'push': self.authorized()}, 'size': size_kb})
         if rest.startswith('/git/trees/'):
             files = [p for p in STORE.rglob('*') if p.is_file() and IMAGE_RE.search(p.name)] if STORE.exists() else []
             return self.send_json(200, {'tree': [self.entry(p) for p in files], 'truncated': False})
