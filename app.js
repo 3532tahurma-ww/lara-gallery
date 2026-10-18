@@ -28,7 +28,10 @@ const todayFmt = new Intl.DateTimeFormat('tr-TR', { weekday: 'long', day: 'numer
 const state = {
   photos: readCache('lg-photos', []),
   meta: readCache('lg-meta', {}),
-  route: 'home', // home | albums | explore | album
+  photoMeta: readCache('lg-photo-meta', {}), // path -> { fav, note }
+  route: 'home', // home | albums | explore | album | favorites
+  favOnly: false,
+  lbDirty: false, // something changed while the lightbox was open; re-render on close
   album: null, // album name on the album route, '' = photos without an album
   albumMap: new Map(),
   filter: { q: '', category: null, tags: new Set() },
@@ -70,6 +73,7 @@ function saveCache() {
   try {
     localStorage.setItem('lg-photos', JSON.stringify(state.photos));
     localStorage.setItem('lg-meta', JSON.stringify(state.meta));
+    localStorage.setItem('lg-photo-meta', JSON.stringify(state.photoMeta));
   } catch {}
 }
 
@@ -141,29 +145,90 @@ async function fetchMeta() {
   }
 }
 
+// albums.json: { albums: { name: { category, tags, cover } }, photos: { path: { fav, note } } }
+const metaQueue = [];
+let metaTimer = null;
+let metaWrite = Promise.resolve();
+
+function setAlbumMeta(data, name, patch) {
+  data.albums ||= {};
+  const info = { category: '', tags: [], ...data.albums[name], ...patch };
+  for (const k of Object.keys(info)) if (info[k] === undefined) delete info[k];
+  data.albums[name] = info;
+}
+
+function setPhotoMeta(data, path, patch) {
+  data.photos ||= {};
+  const info = { ...data.photos[path], ...patch };
+  for (const k of Object.keys(info)) if (info[k] === undefined || info[k] === false || info[k] === '') delete info[k];
+  if (Object.keys(info).length) data.photos[path] = info;
+  else delete data.photos[path];
+}
+
+function applyMetaData(data) {
+  const view = structuredClone(data);
+  for (const q of metaQueue) q.mutator(view); // keep not-yet-saved local edits visible
+  state.meta = view.albums || {};
+  state.photoMeta = view.photos || {};
+  saveCache();
+}
+
+// Applies a change locally right away, then saves it to albums.json.
+// Quick successive changes (e.g. several hearts) are batched into one commit.
+function updateMeta(mutator, { delay = 1200 } = {}) {
+  const local = { albums: structuredClone(state.meta), photos: structuredClone(state.photoMeta) };
+  mutator(local);
+  state.meta = local.albums;
+  state.photoMeta = local.photos;
+  saveCache();
+  return new Promise((resolve, reject) => {
+    metaQueue.push({ mutator, resolve, reject });
+    clearTimeout(metaTimer);
+    metaTimer = setTimeout(flushMeta, delay);
+  });
+}
+
+function flushMeta() {
+  clearTimeout(metaTimer);
+  metaTimer = null;
+  if (!metaQueue.length) return metaWrite;
+  const batch = metaQueue.splice(0);
+  metaWrite = metaWrite.then(() => writeMeta(batch));
+  return metaWrite;
+}
+
 // Re-reads albums.json right before writing so edits from another device are kept.
-async function saveAlbumMeta(name, info) {
-  for (let attempt = 0; ; attempt++) {
-    const { data, sha } = await fetchMeta();
-    data.albums = { ...data.albums, [name]: info };
-    try {
-      await gh(`/contents/${META_PATH}`, {
-        method: 'PUT',
-        body: JSON.stringify({
-          message: `Update album ${name}`,
-          content: utf8ToB64(`${JSON.stringify(data, null, 2)}\n`),
-          branch: config.branch,
-          ...(sha && { sha }),
-        }),
-      });
-      state.meta = data.albums;
-      saveCache();
-      return;
-    } catch (e) {
-      if (![409, 422].includes(e.status) || attempt >= 2) throw e;
-      await sleep(600);
+async function writeMeta(batch) {
+  try {
+    for (let attempt = 0; ; attempt++) {
+      const { data, sha } = await fetchMeta();
+      for (const b of batch) b.mutator(data);
+      try {
+        await gh(`/contents/${META_PATH}`, {
+          method: 'PUT',
+          body: JSON.stringify({
+            message: 'Update albums.json',
+            content: utf8ToB64(`${JSON.stringify(data, null, 2)}\n`),
+            branch: config.branch,
+            ...(sha && { sha }),
+          }),
+        });
+        applyMetaData(data);
+        batch.forEach((b) => b.resolve());
+        return;
+      } catch (e) {
+        if (![409, 422].includes(e.status) || attempt >= 2) throw e;
+        await sleep(600);
+      }
     }
+  } catch (e) {
+    batch.forEach((b) => b.reject(e));
   }
+}
+
+function metaFailed(e) {
+  toast(errorText(e));
+  loadPhotos();
 }
 
 async function loadPhotos() {
@@ -180,8 +245,7 @@ async function loadPhotos() {
         && IMAGE_RE.test(i.path) && i.path.split('/').length <= 3)
       .map(toPhoto)
       .sort(byNewest);
-    state.meta = meta.data.albums || {};
-    saveCache();
+    applyMetaData(meta.data);
   } catch (e) {
     // 404: branch missing, 409: repository has no commits yet.
     if (e.status === 404 || e.status === 409) state.photos = [];
@@ -226,13 +290,21 @@ function albumList() {
     if (!map.has(p.album)) map.set(p.album, []);
     map.get(p.album).push(p);
   }
-  return [...map].sort(([a], [b]) => byTr(a, b)).map(([name, photos]) => ({
-    name,
-    photos,
-    category: state.meta[name]?.category || '',
-    tags: state.meta[name]?.tags || [],
-  }));
+  return [...map].sort(([a], [b]) => byTr(a, b)).map(([name, photos]) => {
+    const info = state.meta[name] || {};
+    return {
+      name,
+      photos,
+      category: info.category || '',
+      tags: info.tags || [],
+      cover: photos.find((p) => p.path === info.cover) || photos[0],
+    };
+  });
 }
+
+const isFav = (photo) => !!state.photoMeta[photo.path]?.fav;
+const noteOf = (photo) => state.photoMeta[photo.path]?.note || '';
+const favPhotos = () => state.photos.filter(isFav);
 
 const filterActive = () => !!state.filter.q || state.filter.category !== null || state.filter.tags.size > 0;
 
@@ -240,7 +312,7 @@ function matchesFilter(a) {
   const { q, category, tags } = state.filter;
   if (category !== null && a.category !== category) return false;
   for (const t of tags) if (!a.tags.includes(t)) return false;
-  const hay = norm([a.name, a.category, ...a.tags].join(' '));
+  const hay = norm([a.name, a.category, ...a.tags, ...a.photos.map(noteOf)].join(' '));
   return norm(q).split(/\s+/).every((w) => hay.includes(w.replace(/^#/, '')));
 }
 
@@ -264,7 +336,7 @@ function readRoute() {
   const hash = location.hash;
   const m = hash.match(/^#\/album\/(.*)$/);
   state.album = m ? decodeURIComponent(m[1]) : null;
-  state.route = m ? 'album' : ({ '#/albums': 'albums', '#/explore': 'explore' })[hash] || 'home';
+  state.route = m ? 'album' : ({ '#/albums': 'albums', '#/explore': 'explore', '#/favorites': 'favorites' })[hash] || 'home';
 }
 
 /* ---------- Rendering ---------- */
@@ -301,19 +373,81 @@ function tagButton(tag) {
 
 const caption = (photo) => (stamp(photo) ? dateFmt.format(stamp(photo)) : '');
 
-function render() {
+const HEART = '<svg class="i" viewBox="0 0 24 24"><path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"/></svg>';
+
+function heartButton(photo) {
+  const b = el('button', `fav-btn${isFav(photo) ? ' on' : ''}`);
+  b.type = 'button';
+  b.dataset.favPath = photo.path;
+  b.setAttribute('aria-label', 'Favorilere ekle');
+  b.innerHTML = HEART;
+  b.addEventListener('click', (e) => {
+    e.stopPropagation();
+    setFav(photo, !isFav(photo));
+  });
+  return b;
+}
+
+function burst(container) {
+  const heart = el('span', 'burst');
+  heart.innerHTML = HEART;
+  heart.addEventListener('animationend', () => heart.remove());
+  container.append(heart);
+}
+
+// A single tap waits briefly so that a double tap can take over.
+function onTaps(node, single, double) {
+  let timer = null;
+  node.addEventListener('click', (e) => {
+    if (timer) {
+      clearTimeout(timer);
+      timer = null;
+      double(e);
+    } else {
+      timer = setTimeout(() => { timer = null; single(e); }, 250);
+    }
+  });
+}
+
+function setFav(photo, on) {
+  if (!config.token) return toast('Favorilere eklemek için ayarlardan token gir');
+  if (isFav(photo) === on) return;
+  updateMeta((d) => setPhotoMeta(d, photo.path, { fav: on })).catch(metaFailed);
+  if (on) navigator.vibrate?.(15);
+  refreshFavs(photo);
+}
+
+function refreshFavs(photo) {
+  const on = isFav(photo);
+  document.querySelectorAll(`[data-fav-path="${CSS.escape(photo.path)}"]`).forEach((n) => n.classList.toggle('on', on));
+  $('#favCount').textContent = favPhotos().length;
+  if (!$('#lightbox').hidden) state.lbDirty = true;
+  else if (state.route === 'home' || state.route === 'favorites' || state.favOnly) render();
+  else if (state.route === 'album') {
+    const album = state.albumMap.get(state.album);
+    const all = state.album === '' ? state.photos.filter((p) => !p.album) : album?.photos || [];
+    renderAlbumMeta(all, album, all.filter(isFav).length);
+  }
+}
+
+function refreshAlbumMap() {
   const albums = albumList();
   state.albumMap = new Map(albums.map((a) => [a.name, a]));
+  return albums;
+}
+
+function render() {
+  const albums = refreshAlbumMap();
   document.body.dataset.view = state.route;
-  for (const [id, route] of [['homeView', 'home'], ['albumsView', 'albums'], ['exploreView', 'explore'], ['albumView', 'album']]) {
-    $(`#${id}`).hidden = state.route !== route;
+  for (const [id, routes] of [['homeView', ['home']], ['albumsView', ['albums']], ['exploreView', ['explore']], ['albumView', ['album', 'favorites']]]) {
+    $(`#${id}`).hidden = !routes.includes(state.route);
   }
-  const navKey = state.route === 'album' ? 'albums' : state.route;
+  const navKey = ({ album: 'albums', favorites: 'home' })[state.route] || state.route;
   document.querySelectorAll('[data-nav]').forEach((a) => a.classList.toggle('active', a.dataset.nav === navKey));
   $('#fabLabel').textContent = state.route === 'album' ? 'Fotoğraf ekle' : 'Yeni albüm';
 
   renderSidebar(albums);
-  ({ home: renderHome, albums: renderAlbums, explore: renderExplore, album: renderAlbum })[state.route](albums);
+  ({ home: renderHome, albums: renderAlbums, explore: renderExplore, album: renderAlbum, favorites: renderAlbum })[state.route](albums);
 
   $('#count').textContent = state.photos.length || albums.length
     ? `${state.photos.length} anı · ${albums.length} albüm`
@@ -353,6 +487,8 @@ function renderSidebar(albums) {
     ? tags.map(tagButton)
     : [el('p', 'hint', 'Henüz etiket yok. Bir albümü düzenleyip ekleyebilirsin.')]));
   $('#clearFilters').hidden = !filterActive();
+  $('#favCount').textContent = favPhotos().length;
+  document.querySelector('.fav-link').classList.toggle('active', state.route === 'favorites');
   renderStorage();
 }
 
@@ -398,7 +534,7 @@ function albumCard(a) {
   const link = el('a', 'album-card');
   link.href = albumHref(a.name);
   const cover = el('div', 'album-cover');
-  if (a.photos[0]) cover.append(makeImg(a.photos[0].url, a.label || a.name));
+  if (a.cover) cover.append(makeImg(a.cover.url, a.label || a.name));
   else {
     const blank = el('div', 'cover-blank');
     blank.append(Object.assign(new Image(), { src: 'icons/icon.svg', alt: '' }));
@@ -439,6 +575,17 @@ function renderHome(albums) {
   $('#heroCollage').replaceChildren(...state.heroPaths.map((path) => makeImg(photoUrl(path))));
   $('#heroCollage').hidden = state.heroPaths.length === 0;
   $('#shuffleBtn').hidden = albums.length < 2;
+  $('#memoryBtn').hidden = albumPhotos.length === 0;
+
+  const favs = favPhotos();
+  $('#favSection').hidden = favs.length === 0;
+  $('#favStrip').replaceChildren(...favs.slice(0, 12).map((p, i) => {
+    const b = el('button', 'fav-thumb');
+    b.type = 'button';
+    b.append(makeImg(p.url, p.album));
+    b.addEventListener('click', () => openLightbox(i, false, favs));
+    return b;
+  }));
 
   $('#randomGrid').replaceChildren(...state.picks.map((n) => albumCard(state.albumMap.get(n))));
   $('#randomGrid').previousElementSibling.hidden = albums.length === 0;
@@ -508,7 +655,7 @@ function postEl(photo, i) {
 
   const head = el('button', 'post-head');
   head.type = 'button';
-  const avatar = makeImg(album?.photos[0]?.url || photo.url);
+  const avatar = makeImg(album?.cover?.url || photo.url);
   avatar.classList.add('avatar');
   const who = el('span', 'post-who');
   who.append(el('b', '', photo.album), el('small', '', album?.category || `${album?.photos.length || 1} fotoğraf`));
@@ -519,19 +666,23 @@ function postEl(photo, i) {
   media.type = 'button';
   media.setAttribute('aria-label', `${photo.album} fotoğrafını aç`);
   media.append(makeImg(photo.url, photo.album));
-  media.addEventListener('click', () => openLightbox(i, true));
+  onTaps(media, () => openLightbox(i, true), () => {
+    burst(media);
+    setFav(photo, true);
+  });
 
   const body = el('div', 'post-body');
+  const actions = el('div', 'post-actions');
+  const go = el('a', 'link-btn', 'Albüme git →');
+  go.href = albumHref(photo.album);
+  actions.append(heartButton(photo), el('time', '', caption(photo)), go);
+  body.append(actions);
+  if (noteOf(photo)) body.append(el('p', 'note-text', noteOf(photo)));
   if (album?.tags.length) {
     const row = el('div', 'tags');
     row.append(...album.tags.map(tagButton));
     body.append(row);
   }
-  const foot = el('div', 'post-foot');
-  const go = el('a', 'link-btn', 'Albüme git →');
-  go.href = albumHref(photo.album);
-  foot.append(el('time', '', caption(photo)), go);
-  body.append(foot);
 
   post.append(head, media, body);
   return post;
@@ -569,15 +720,60 @@ function reshuffleFeed() {
 
 /* ---------- Album page ---------- */
 
+// Renders an album page, or "Favorilerim" on the favorites route.
 function renderAlbum(albums) {
+  const favRoute = state.route === 'favorites';
   const name = state.album;
   const unsorted = name === '';
-  const album = albums.find((a) => a.name === name);
-  state.view = unsorted ? state.photos.filter((p) => !p.album) : album?.photos || [];
+  const album = favRoute ? null : albums.find((a) => a.name === name);
+  const all = favRoute ? favPhotos() : unsorted ? state.photos.filter((p) => !p.album) : album?.photos || [];
+  const favCount = favRoute ? 0 : all.filter(isFav).length;
+  if (!favCount) state.favOnly = false;
+  state.view = state.favOnly ? all.filter(isFav) : all;
 
-  $('#albumTitle').textContent = unsorted ? 'Albümsüz' : name;
-  $('#editAlbumBtn').hidden = unsorted;
-  const meta = [el('span', '', `${state.view.length} fotoğraf · ${formatSize(sizeOf(state.view))}`)];
+  $('#albumTitle').textContent = favRoute ? 'Favorilerim' : unsorted ? 'Albümsüz' : name;
+  $('#editAlbumBtn').hidden = favRoute || unsorted;
+  $('#backLink').href = favRoute ? '#/' : '#/albums';
+  $('#backText').textContent = favRoute ? 'Ana sayfa' : 'Albümler';
+  $('#emptyTitle').textContent = favRoute ? 'Henüz favorin yok' : 'Bu albüm henüz boş';
+  $('#emptyText').textContent = favRoute
+    ? 'Keşfet\'te ya da bir albümde fotoğrafa çift dokunarak favorilere ekle.'
+    : 'Sağ alttaki butonla fotoğraf ekle. Bilgisayardaysan sürükleyip bırakabilir ya da yapıştırabilirsin.';
+  renderAlbumMeta(all, album, favCount);
+
+  $('#grid').replaceChildren(...state.view.map((photo, i) => {
+    const card = el('button', `card${isFav(photo) ? ' on' : ''}`);
+    card.type = 'button';
+    card.dataset.favPath = photo.path;
+    card.style.animationDelay = `${Math.min(i, 12) * 35}ms`;
+    const mark = el('span', 'card-fav');
+    mark.innerHTML = HEART;
+    card.append(makeImg(photo.url, caption(photo) || photo.album), mark);
+    if (caption(photo)) card.append(el('time', '', caption(photo)));
+    if (noteOf(photo)) card.append(el('p', 'card-note', noteOf(photo)));
+    onTaps(card, () => openLightbox(i), () => {
+      burst(card);
+      setFav(photo, true);
+    });
+    return card;
+  }));
+  $('#empty').hidden = state.view.length > 0;
+}
+
+// The line under the album title; refreshed on its own after a heart so the grid is not rebuilt.
+function renderAlbumMeta(all, album, favCount) {
+  const meta = [el('span', '', `${all.length} fotoğraf · ${formatSize(sizeOf(all))}`)];
+  if (favCount) {
+    const chip = el('button', `badge fav-filter${state.favOnly ? ' active' : ''}`);
+    chip.type = 'button';
+    chip.innerHTML = HEART;
+    chip.append(` Favoriler (${favCount})`);
+    chip.addEventListener('click', () => {
+      state.favOnly = !state.favOnly;
+      render();
+    });
+    meta.push(chip);
+  }
   if (album?.category) {
     const badge = el('button', 'badge', album.category);
     badge.type = 'button';
@@ -590,17 +786,6 @@ function renderAlbum(albums) {
     meta.push(row);
   }
   $('#albumMeta').replaceChildren(...meta);
-
-  $('#grid').replaceChildren(...state.view.map((photo, i) => {
-    const card = el('button', 'card');
-    card.type = 'button';
-    card.style.animationDelay = `${Math.min(i, 12) * 35}ms`;
-    card.append(makeImg(photo.url, caption(photo) || name));
-    if (caption(photo)) card.append(el('time', '', caption(photo)));
-    card.addEventListener('click', () => openLightbox(i));
-    return card;
-  }));
-  $('#empty').hidden = state.view.length > 0;
 }
 
 /* ---------- Album dialog ---------- */
@@ -662,7 +847,7 @@ $('#albumForm').addEventListener('submit', async (e) => {
   const submit = e.target.querySelector('[type=submit]');
   submit.disabled = true;
   try {
-    await saveAlbumMeta(name, info);
+    await updateMeta((d) => setAlbumMeta(d, name, info), { delay: 0 });
     const done = onAlbumCreated;
     onAlbumCreated = null;
     $('#albumDialog').close();
@@ -673,7 +858,7 @@ $('#albumForm').addEventListener('submit', async (e) => {
     } else if (editing) render();
     else location.hash = albumHref(name);
   } catch (err) {
-    toast(errorText(err));
+    metaFailed(err);
   } finally {
     submit.disabled = false;
   }
@@ -736,7 +921,7 @@ function pickAlbum(title, exclude = null) {
     const items = albumList().filter((a) => a.name !== exclude).map((a) => {
       const b = el('button', 'pick-item');
       b.type = 'button';
-      if (a.photos[0]) b.append(Object.assign(makeImg(a.photos[0].url), { loading: 'eager' }));
+      if (a.cover) b.append(Object.assign(makeImg(a.cover.url), { loading: 'eager' }));
       else b.append(el('span', 'pick-blank', '·'));
       const text = el('span');
       text.append(el('b', '', a.name), el('small', '', [`${a.photos.length} fotoğraf`, a.category].filter(Boolean).join(' · ')));
@@ -820,7 +1005,9 @@ async function consumeShared() {
 
 /* ---------- Lightbox ---------- */
 
-function openLightbox(i, showInfo = state.showInfo) {
+// `list` replaces the photos to browse (e.g. favorites on the home page).
+function openLightbox(i, showInfo = state.showInfo, list = null) {
+  if (list) state.view = list;
   state.index = i;
   state.showInfo = showInfo;
   showCurrent();
@@ -831,8 +1018,25 @@ function openLightbox(i, showInfo = state.showInfo) {
 
 function hideLightbox() {
   $('#lightbox').hidden = true;
+  $('#lightbox').classList.remove('memory');
   document.body.classList.remove('no-scroll');
   state.index = -1;
+  resetZoom();
+  if (state.lbDirty) {
+    state.lbDirty = false;
+    render();
+  }
+}
+
+function showMemory() {
+  const pool = shuffle(state.photos.filter((p) => p.album));
+  if (!pool.length) return;
+  openLightbox(0, true, pool);
+  const lb = $('#lightbox');
+  lb.classList.remove('memory');
+  void lb.offsetWidth; // restart the animation
+  lb.classList.add('memory');
+  toast(`✨ ${pool[0].album} albümünden bir anı`);
 }
 
 function closeLightbox(fromPop = false) {
@@ -858,6 +1062,7 @@ function showCurrent() {
     if (img.src === p.url && img.naturalWidth) $('#lbDims').textContent = `${img.naturalWidth} × ${img.naturalHeight}`;
   };
   $('#lbDims').textContent = '—';
+  resetZoom();
   img.onload = setDims;
   img.src = p.url;
   img.alt = caption(p) || p.album;
@@ -866,7 +1071,14 @@ function showCurrent() {
 
   const album = state.albumMap.get(p.album);
   $('#lbAlbumName').textContent = p.album || 'Albümsüz';
-  $('#lbAlbumCover').src = album?.photos[0]?.url || p.url;
+  $('#lbAlbumCover').src = album?.cover?.url || p.url;
+  $('#lbFav').dataset.favPath = p.path;
+  $('#lbFav').classList.toggle('on', isFav(p));
+  const isCover = album?.cover?.path === p.path;
+  $('#lbCover').hidden = !p.album;
+  $('#lbCover').disabled = isCover;
+  $('#lbCover').textContent = isCover ? '✓ Albüm kapağı' : 'Kapak yap';
+  renderNote(p);
   $('#lbCategory').textContent = album?.category || '—';
   $('#lbDate').textContent = stamp(p) ? fullDateFmt.format(stamp(p)) : 'Bilinmiyor';
   $('#lbSize').textContent = p.size ? formatSize(p.size) : '—';
@@ -883,6 +1095,42 @@ function showCurrent() {
   }));
   $('#lbGoAlbum').hidden = state.route === 'album';
   applyInfo();
+}
+
+function renderNote(p) {
+  const note = noteOf(p);
+  $('#lbNoteText').textContent = note || 'Henüz not yok.';
+  $('#lbNoteText').classList.toggle('empty', !note);
+  $('#lbNoteEdit').textContent = note ? 'Notu düzenle' : 'Not ekle';
+  setNoteEditing(false);
+}
+
+function setNoteEditing(on) {
+  for (const id of ['#lbNoteInput', '#lbNoteSave', '#lbNoteCancel']) $(id).hidden = !on;
+  $('#lbNoteText').hidden = on;
+  $('#lbNoteEdit').hidden = on;
+  if (on) {
+    $('#lbNoteInput').value = noteOf(state.view[state.index]);
+    $('#lbNoteInput').focus();
+  }
+}
+
+function saveNote() {
+  const p = state.view[state.index];
+  const note = $('#lbNoteInput').value.trim().slice(0, 300);
+  updateMeta((d) => setPhotoMeta(d, p.path, { note })).catch(metaFailed);
+  state.lbDirty = true;
+  renderNote(p);
+  toast(note ? 'Not kaydedildi' : 'Not silindi');
+}
+
+function makeCover() {
+  const p = state.view[state.index];
+  updateMeta((d) => setAlbumMeta(d, p.album, { cover: p.path })).catch(metaFailed);
+  state.lbDirty = true;
+  refreshAlbumMap();
+  showCurrent();
+  toast(`“${p.album}” albümünün kapağı güncellendi`);
 }
 
 function applyInfo() {
@@ -935,6 +1183,13 @@ async function deleteCurrent() {
     // Keep an up-to-date explore order stable instead of reshuffling under the open lightbox.
     const feedFresh = state.feedKey === feedKeyOf();
     state.photos = state.photos.filter((x) => x.path !== p.path);
+    state.view = state.view.filter((x) => x.path !== p.path);
+    if (state.photoMeta[p.path] || state.meta[p.album]?.cover === p.path) {
+      updateMeta((d) => {
+        delete d.photos?.[p.path];
+        if (d.albums?.[p.album]?.cover === p.path) delete d.albums[p.album].cover;
+      }).catch(metaFailed);
+    }
     const fi = state.feed.findIndex((x) => x.path === p.path);
     if (fi >= 0) {
       state.feed.splice(fi, 1);
@@ -975,7 +1230,18 @@ async function moveCurrent() {
     const feedFresh = state.feedKey === feedKeyOf();
     state.photos = state.photos.map((x) => (x.path === p.path ? moved : x));
     state.feed = state.feed.map((x) => (x.path === p.path ? moved : x));
+    state.view = state.view.map((x) => (x.path === p.path ? moved : x));
     if (feedFresh) state.feedKey = feedKeyOf();
+    // Favorite and note travel with the photo; it can no longer be the old album's cover.
+    if (state.photoMeta[p.path] || state.meta[p.album]?.cover === p.path) {
+      updateMeta((d) => {
+        if (d.photos?.[p.path]) {
+          d.photos[moved.path] = d.photos[p.path];
+          delete d.photos[p.path];
+        }
+        if (d.albums?.[p.album]?.cover === p.path) delete d.albums[p.album].cover;
+      }).catch(metaFailed);
+    }
     saveCache();
     render();
     syncLightbox();
@@ -1050,6 +1316,8 @@ $('#clearFilters').addEventListener('click', () => {
   setFilter({ q: '', category: null, tags: new Set() });
 });
 
+$('#memoryBtn').addEventListener('click', showMemory);
+$('#lbImg').addEventListener('animationend', () => $('#lightbox').classList.remove('memory'));
 $('#shuffleBtn').addEventListener('click', () => {
   state.picks = null;
   state.heroPaths = null;
@@ -1060,6 +1328,7 @@ $('#feedAgain').addEventListener('click', reshuffleFeed);
 
 window.addEventListener('hashchange', () => {
   readRoute();
+  state.favOnly = false;
   closeLightbox(true);
   render();
   scrollTo(0, 0);
@@ -1091,25 +1360,171 @@ $('#lbInfoBtn').addEventListener('click', () => {
 });
 $('#lbGoAlbum').addEventListener('click', goToCurrentAlbum);
 $('#lbAlbumLink').addEventListener('click', goToCurrentAlbum);
-$('#lbStage').addEventListener('click', (e) => { if (e.target === e.currentTarget) closeLightbox(); });
-window.addEventListener('popstate', () => closeLightbox(true));
-
-let touchX = null;
-$('#lbStage').addEventListener('touchstart', (e) => { touchX = e.touches[0].clientX; }, { passive: true });
-$('#lbStage').addEventListener('touchend', (e) => {
-  if (touchX === null) return;
-  const dx = e.changedTouches[0].clientX - touchX;
-  if (Math.abs(dx) > 50) step(dx < 0 ? 1 : -1);
-  touchX = null;
+$('#lbFav').addEventListener('click', () => {
+  const p = state.view[state.index];
+  setFav(p, !isFav(p));
 });
+$('#lbNoteEdit').addEventListener('click', () => (config.token ? setNoteEditing(true) : toast('Not eklemek için ayarlardan token gir')));
+$('#lbNoteCancel').addEventListener('click', () => setNoteEditing(false));
+$('#lbNoteSave').addEventListener('click', saveNote);
+$('#lbCover').addEventListener('click', () => (config.token ? makeCover() : toast('Kapak seçmek için ayarlardan token gir')));
+window.addEventListener('popstate', () => closeLightbox(true));
+// Save pending hearts/notes before the app goes to the background.
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushMeta(); });
+
+/* ---------- Lightbox gestures: pinch / double-tap zoom, pan, swipe ---------- */
+
+const zoom = { s: 1, x: 0, y: 0 };
+const pointers = new Map();
+let gesture = null;
+let lastTap = { t: 0, x: 0, y: 0 };
+
+function applyZoom(animate = false) {
+  const img = $('#lbImg');
+  img.classList.toggle('animating', animate);
+  img.style.transform = zoom.s === 1 && !zoom.x && !zoom.y ? '' : `translate(${zoom.x}px, ${zoom.y}px) scale(${zoom.s})`;
+  $('#lightbox').classList.toggle('zoomed', zoom.s > 1);
+}
+
+function resetZoom(animate = false) {
+  Object.assign(zoom, { s: 1, x: 0, y: 0 });
+  $('#lightbox').style.removeProperty('--lb-alpha');
+  applyZoom(animate);
+}
+
+function imgCenter() {
+  const r = $('#lbImg').getBoundingClientRect();
+  return { x: r.left + r.width / 2 - zoom.x, y: r.top + r.height / 2 - zoom.y };
+}
+
+// Scales to `s` while keeping the screen point (px, py) under the finger.
+function zoomTo(s, px, py, base = { ...zoom }, center = imgCenter()) {
+  s = Math.max(1, Math.min(4, s));
+  zoom.x = s === 1 ? 0 : px - center.x - ((px - center.x - base.x) * s) / base.s;
+  zoom.y = s === 1 ? 0 : py - center.y - ((py - center.y - base.y) * s) / base.s;
+  zoom.s = s;
+}
+
+function clampZoom() {
+  const img = $('#lbImg');
+  const mx = (img.offsetWidth * (zoom.s - 1)) / 2;
+  const my = (img.offsetHeight * (zoom.s - 1)) / 2;
+  zoom.x = Math.max(-mx, Math.min(mx, zoom.x));
+  zoom.y = Math.max(-my, Math.min(my, zoom.y));
+}
+
+const stage = $('#lbStage');
+
+stage.addEventListener('pointerdown', (e) => {
+  if (e.pointerType === 'mouse' && e.button !== 0) return;
+  try { stage.setPointerCapture(e.pointerId); } catch {}
+  pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  const pts = [...pointers.values()];
+  if (pts.length === 2) {
+    const [a, b] = pts;
+    gesture = {
+      type: 'pinch',
+      dist: Math.hypot(a.x - b.x, a.y - b.y) || 1,
+      mid: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 },
+      base: { ...zoom },
+      center: imgCenter(),
+    };
+  } else if (pts.length === 1) {
+    gesture = { type: 'drag', sx: e.clientX, sy: e.clientY, base: { ...zoom }, axis: null, moved: false, onImg: e.target === $('#lbImg') };
+  }
+});
+
+stage.addEventListener('pointermove', (e) => {
+  if (!pointers.has(e.pointerId) || !gesture) return;
+  pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (gesture.type === 'pinch') {
+    if (pointers.size < 2) return;
+    const [a, b] = [...pointers.values()];
+    zoomTo(gesture.base.s * (Math.hypot(a.x - b.x, a.y - b.y) / gesture.dist), gesture.mid.x, gesture.mid.y, gesture.base, gesture.center);
+    zoom.x += (a.x + b.x) / 2 - gesture.mid.x;
+    zoom.y += (a.y + b.y) / 2 - gesture.mid.y;
+    applyZoom();
+    return;
+  }
+  const dx = e.clientX - gesture.sx;
+  const dy = e.clientY - gesture.sy;
+  if (!gesture.moved && Math.hypot(dx, dy) < 8) return;
+  gesture.moved = true;
+  if (zoom.s > 1) {
+    zoom.x = gesture.base.x + dx;
+    zoom.y = gesture.base.y + dy;
+  } else {
+    gesture.axis ||= Math.abs(dy) > Math.abs(dx) ? 'y' : 'x';
+    if (gesture.axis === 'y') {
+      // Pull down to close: the photo follows the finger and the backdrop fades.
+      zoom.y = Math.max(0, dy);
+      $('#lightbox').style.setProperty('--lb-alpha', String(Math.max(0.2, 0.96 - zoom.y / 450)));
+    } else {
+      zoom.x = dx * 0.5;
+    }
+  }
+  applyZoom();
+});
+
+function endPointer(e) {
+  if (!pointers.delete(e.pointerId) || !gesture) return;
+  if (gesture.type === 'pinch') {
+    if (zoom.s < 1.05) resetZoom(true);
+    else {
+      clampZoom();
+      applyZoom(true);
+    }
+    const rest = [...pointers.values()][0];
+    gesture = rest ? { type: 'drag', sx: rest.x, sy: rest.y, base: { ...zoom }, axis: null, moved: true } : null;
+    return;
+  }
+  if (pointers.size) return;
+  const g = gesture;
+  gesture = null;
+  const dx = e.clientX - g.sx;
+  const dy = e.clientY - g.sy;
+  if (!g.moved) return handleTap(e, g);
+  if (zoom.s > 1) {
+    clampZoom();
+    applyZoom(true);
+  } else if (g.axis === 'y' && dy > 110) closeLightbox();
+  else if (g.axis === 'x' && Math.abs(dx) > 60) step(dx < 0 ? 1 : -1);
+  else resetZoom(true);
+}
+stage.addEventListener('pointerup', endPointer);
+stage.addEventListener('pointercancel', endPointer);
+
+function handleTap(e, g) {
+  const now = Date.now();
+  const double = now - lastTap.t < 300 && Math.hypot(e.clientX - lastTap.x, e.clientY - lastTap.y) < 40;
+  lastTap = double ? { t: 0, x: 0, y: 0 } : { t: now, x: e.clientX, y: e.clientY };
+  if (double && g.onImg) {
+    if (zoom.s > 1) resetZoom(true);
+    else {
+      zoomTo(2.5, e.clientX, e.clientY);
+      clampZoom();
+      applyZoom(true);
+    }
+  } else if (!g.onImg && zoom.s === 1) {
+    closeLightbox(); // tap on the dark backdrop
+  }
+}
+
+stage.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  zoomTo(zoom.s * (e.deltaY < 0 ? 1.2 : 1 / 1.2), e.clientX, e.clientY);
+  clampZoom();
+  applyZoom();
+}, { passive: false });
 
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') closeDrawer();
-  if ($('#lightbox').hidden) return;
-  if (e.key === 'Escape') closeLightbox();
+  if ($('#lightbox').hidden || e.target.closest?.('input, textarea')) return;
+  if (e.key === 'Escape') (zoom.s > 1 ? resetZoom(true) : closeLightbox());
   else if (e.key === 'ArrowLeft') step(-1);
   else if (e.key === 'ArrowRight') step(1);
   else if (e.key === 'i') $('#lbInfoBtn').click();
+  else if (e.key === 'f') $('#lbFav').click();
 });
 
 let dragDepth = 0;

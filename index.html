@@ -59,6 +59,10 @@
         <svg class="i" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
         <input type="search" id="search" placeholder="Albüm, tema, etiket…" autocomplete="off" aria-label="Albüm ara">
       </label>
+      <a class="side-item fav-link" href="#/favorites">
+        <span><svg class="i" viewBox="0 0 24 24"><path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"/></svg>Favorilerim</span>
+        <span class="side-count" id="favCount">0</span>
+      </a>
       <section>
         <h3 class="side-title">Temalar</h3>
         <div class="side-list" id="categoryList"></div>
@@ -94,6 +98,9 @@
               <button class="btn small primary" id="shuffleBtn" type="button">
                 <svg class="i" viewBox="0 0 24 24"><path d="M16 3h5v5"/><path d="M4 20 21 3"/><path d="M21 16v5h-5"/><path d="m15 15 6 6"/><path d="M4 4l5 5"/></svg>Karıştır
               </button>
+              <button class="btn small" id="memoryBtn" type="button">
+                <svg class="i" viewBox="0 0 24 24"><path d="M12 3l1.8 4.7 4.7 1.8-4.7 1.8L12 16l-1.8-4.7-4.7-1.8 4.7-1.8z"/><path d="M19 15l.8 2.2 2.2.8-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/></svg>Bana bir anı göster
+              </button>
               <a class="btn small" href="#/explore">
                 <svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m15.5 8.5-2 5-5 2 2-5z"/></svg>Keşfet
               </a>
@@ -101,6 +108,13 @@
           </div>
           <div class="hero-collage" id="heroCollage" aria-hidden="true"></div>
         </div>
+        <section class="fav-section" id="favSection" hidden>
+          <div class="view-head">
+            <h2>Favorilerim</h2>
+            <a href="#/favorites">Tümünü gör →</a>
+          </div>
+          <div class="fav-strip" id="favStrip"></div>
+        </section>
         <div class="view-head">
           <h2>Senin için seçtiklerimiz</h2>
           <a href="#/albums">Tüm albümler →</a>
@@ -154,8 +168,8 @@
 
       <section id="albumView" hidden>
         <div class="album-head">
-          <a class="back" href="#/albums">
-            <svg class="i" viewBox="0 0 24 24"><path d="m15 6-6 6 6 6"/></svg>Albümler
+          <a class="back" id="backLink" href="#/albums">
+            <svg class="i" viewBox="0 0 24 24"><path d="m15 6-6 6 6 6"/></svg><span id="backText">Albümler</span>
           </a>
           <div class="album-title-row">
             <h2 id="albumTitle"></h2>
@@ -168,8 +182,8 @@
         <div class="grid intro" id="grid"></div>
         <section class="empty" id="empty" hidden>
           <img src="icons/icon.svg" alt="" width="88" height="88">
-          <h2>Bu albüm henüz boş</h2>
-          <p>Sağ alttaki butonla fotoğraf ekle.<br>Bilgisayardaysan sürükleyip bırakabilir ya da yapıştırabilirsin.</p>
+          <h2 id="emptyTitle">Bu albüm henüz boş</h2>
+          <p id="emptyText">Sağ alttaki butonla fotoğraf ekle.<br>Bilgisayardaysan sürükleyip bırakabilir ya da yapıştırabilirsin.</p>
         </section>
       </section>
     </main>
@@ -195,7 +209,7 @@
 
   <div class="lightbox" id="lightbox" hidden>
     <div class="lb-stage" id="lbStage">
-      <img id="lbImg" alt="" crossorigin="anonymous">
+      <img id="lbImg" alt="" crossorigin="anonymous" draggable="false">
     </div>
     <button class="lb-nav prev" id="lbPrev" type="button" aria-label="Önceki">
       <svg class="i" viewBox="0 0 24 24"><path d="m15 6-6 6 6 6"/></svg>
@@ -209,6 +223,17 @@
         <span><small>Albüm</small><b id="lbAlbumName"></b></span>
       </button>
       <div class="tags" id="lbTags"></div>
+      <div class="lb-note">
+        <h4>Not</h4>
+        <p class="note-text" id="lbNoteText"></p>
+        <textarea id="lbNoteInput" rows="3" maxlength="300" placeholder="Bu anı hakkında bir şey yaz…" hidden></textarea>
+        <div class="note-actions">
+          <button class="btn small" id="lbNoteEdit" type="button">Not ekle</button>
+          <button class="btn small primary" id="lbNoteSave" type="button" hidden>Kaydet</button>
+          <button class="btn small" id="lbNoteCancel" type="button" hidden>Vazgeç</button>
+          <button class="btn small" id="lbCover" type="button">Kapak yap</button>
+        </div>
+      </div>
       <dl class="lb-facts">
         <div><dt>Tema</dt><dd id="lbCategory"></dd></div>
         <div><dt>Eklenme</dt><dd id="lbDate"></dd></div>
@@ -224,6 +249,9 @@
     <div class="lb-bar">
       <span id="lbCaption"></span>
       <div class="actions">
+        <button class="icon-btn" id="lbFav" type="button" title="Favori" aria-label="Favori">
+          <svg class="i" viewBox="0 0 24 24"><path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"/></svg>
+        </button>
         <button class="icon-btn" id="lbInfoBtn" type="button" title="Bilgiler" aria-label="Bilgiler">
           <svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5"/><path d="M12 8h.01"/></svg>
         </button>

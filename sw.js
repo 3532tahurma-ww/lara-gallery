@@ -1,5 +1,5 @@
 // Bump VERSION on every deploy so clients pick up the new app shell.
-const VERSION = 'v6';
+const VERSION = 'v7';
 const SHELL_CACHE = `lg-shell-${VERSION}`;
 const RUNTIME_CACHE = 'lg-runtime';
 const IMG_CACHE = 'lg-images';
