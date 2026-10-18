@@ -1,0 +1,312 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Lara Gallery</title>
+  <meta name="description" content="Küçük anılar için sıcak bir galeri">
+  <meta name="theme-color" content="#f6efe6" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#1f1915" media="(prefers-color-scheme: dark)">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="icon" href="icons/icon-32.png" type="image/png" sizes="32x32">
+  <link rel="apple-touch-icon" href="icons/icon-180.png" sizes="180x180">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Lara Gallery">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Nunito:wght@400;600;700&display=swap">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="top">
+    <a class="brand" href="#/">
+      <img class="brand-mark" src="icons/icon.svg" alt="" width="42" height="42">
+      <div>
+        <h1>Lara Gallery</h1>
+        <p class="subtitle" id="count">Küçük anılar için sıcak bir köşe</p>
+      </div>
+    </a>
+    <nav class="tabs" aria-label="Bölümler">
+      <a class="tab" href="#/" data-nav="home">
+        <svg class="i" viewBox="0 0 24 24"><path d="M3 11 12 4l9 7"/><path d="M5 10v10h14V10"/></svg>Ana sayfa
+      </a>
+      <a class="tab" href="#/albums" data-nav="albums">
+        <svg class="i" viewBox="0 0 24 24"><rect x="3" y="7" width="14" height="14" rx="2"/><path d="M7 3h12a2 2 0 0 1 2 2v12"/></svg>Albümler
+      </a>
+      <a class="tab" href="#/explore" data-nav="explore">
+        <svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m15.5 8.5-2 5-5 2 2-5z"/></svg>Keşfet
+      </a>
+    </nav>
+    <div class="actions">
+      <button class="icon-btn menu-btn" id="menuBtn" type="button" title="Ara ve filtrele" aria-label="Ara ve filtrele">
+        <svg class="i" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+      </button>
+      <button class="icon-btn" id="refreshBtn" type="button" title="Yenile" aria-label="Yenile">
+        <svg class="i" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.64-6.36L21 8"/><path d="M21 3v5h-5"/></svg>
+      </button>
+      <button class="icon-btn" id="settingsBtn" type="button" title="Ayarlar" aria-label="Ayarlar">
+        <svg class="i" viewBox="0 0 24 24"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <div class="layout">
+    <aside class="sidebar" id="sidebar" aria-label="Albüm ara ve filtrele">
+      <label class="search">
+        <svg class="i" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        <input type="search" id="search" placeholder="Albüm, tema, etiket…" autocomplete="off" aria-label="Albüm ara">
+      </label>
+      <section>
+        <h3 class="side-title">Temalar</h3>
+        <div class="side-list" id="categoryList"></div>
+      </section>
+      <section>
+        <h3 class="side-title">Etiketler</h3>
+        <div class="tags" id="tagList"></div>
+      </section>
+      <button class="link-btn" id="clearFilters" type="button" hidden>Filtreleri temizle</button>
+    </aside>
+    <div class="scrim" id="scrim" hidden></div>
+
+    <main>
+      <div class="queue" id="queue" hidden>
+        <span id="queueText">Yükleniyor…</span>
+        <div class="bar"><div id="queueBar"></div></div>
+      </div>
+
+      <section id="homeView">
+        <div class="hero">
+          <div class="hero-copy">
+            <p class="hero-kicker" id="heroDate"></p>
+            <h2>Hoşgeldin!</h2>
+            <p class="hero-text" id="heroText"></p>
+            <p class="hero-stats" id="heroStats"></p>
+            <div class="hero-actions">
+              <button class="btn small primary" id="shuffleBtn" type="button">
+                <svg class="i" viewBox="0 0 24 24"><path d="M16 3h5v5"/><path d="M4 20 21 3"/><path d="M21 16v5h-5"/><path d="m15 15 6 6"/><path d="M4 4l5 5"/></svg>Karıştır
+              </button>
+              <a class="btn small" href="#/explore">
+                <svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m15.5 8.5-2 5-5 2 2-5z"/></svg>Keşfet
+              </a>
+            </div>
+          </div>
+          <div class="hero-collage" id="heroCollage" aria-hidden="true"></div>
+        </div>
+        <div class="view-head">
+          <h2>Senin için seçtiklerimiz</h2>
+          <a href="#/albums">Tüm albümler →</a>
+        </div>
+        <div class="album-grid" id="randomGrid"></div>
+        <div class="empty" id="homeEmpty" hidden>
+          <img src="icons/icon.svg" alt="" width="88" height="88">
+          <h2>Henüz albüm yok</h2>
+          <p>Sağ alttaki butonla ilk albümünü oluştur.</p>
+        </div>
+      </section>
+
+      <section id="albumsView" hidden>
+        <div class="view-head">
+          <h2>Albümler</h2>
+          <div class="view-tools">
+            <p id="filterSummary"></p>
+            <div class="segmented" role="group" aria-label="Gruplama">
+              <button type="button" data-group="none">Tümü</button>
+              <button type="button" data-group="theme">Temaya göre</button>
+            </div>
+          </div>
+        </div>
+        <div id="albumsBody"></div>
+        <div class="empty" id="albumsEmpty" hidden>
+          <img src="icons/icon.svg" alt="" width="88" height="88">
+          <h2 id="albumsEmptyTitle">Henüz albüm yok</h2>
+          <p id="albumsEmptyText">Sağ alttaki butonla ilk albümünü oluştur.</p>
+        </div>
+      </section>
+
+      <section id="exploreView" class="feed-wrap" hidden>
+        <div class="view-head">
+          <h2>Keşfet</h2>
+          <button class="btn small" id="reshuffleBtn" type="button">
+            <svg class="i" viewBox="0 0 24 24"><path d="M16 3h5v5"/><path d="M4 20 21 3"/><path d="M21 16v5h-5"/><path d="m15 15 6 6"/><path d="M4 4l5 5"/></svg>Karıştır
+          </button>
+        </div>
+        <div class="feed" id="feed"></div>
+        <div id="feedSentinel"></div>
+        <div class="feed-end" id="feedEnd" hidden>
+          <p>Hepsini gördün ✨</p>
+          <button class="btn small" id="feedAgain" type="button">Yeniden karıştır</button>
+        </div>
+        <div class="empty" id="exploreEmpty" hidden>
+          <img src="icons/icon.svg" alt="" width="88" height="88">
+          <h2>Keşfedecek bir şey yok</h2>
+          <p>Albümlere fotoğraf ekledikçe burada belirecek.</p>
+        </div>
+      </section>
+
+      <section id="albumView" hidden>
+        <div class="album-head">
+          <a class="back" href="#/albums">
+            <svg class="i" viewBox="0 0 24 24"><path d="m15 6-6 6 6 6"/></svg>Albümler
+          </a>
+          <div class="album-title-row">
+            <h2 id="albumTitle"></h2>
+            <button class="btn small" id="editAlbumBtn" type="button">
+              <svg class="i" viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="m13.5 6.5 4 4"/></svg>Düzenle
+            </button>
+          </div>
+          <div class="album-meta" id="albumMeta"></div>
+        </div>
+        <div class="grid intro" id="grid"></div>
+        <section class="empty" id="empty" hidden>
+          <img src="icons/icon.svg" alt="" width="88" height="88">
+          <h2>Bu albüm henüz boş</h2>
+          <p>Sağ alttaki butonla fotoğraf ekle.<br>Bilgisayardaysan sürükleyip bırakabilir ya da yapıştırabilirsin.</p>
+        </section>
+      </section>
+    </main>
+  </div>
+
+  <nav class="tabbar" aria-label="Bölümler">
+    <a class="tab" href="#/" data-nav="home">
+      <svg class="i" viewBox="0 0 24 24"><path d="M3 11 12 4l9 7"/><path d="M5 10v10h14V10"/></svg><span>Ana sayfa</span>
+    </a>
+    <a class="tab" href="#/albums" data-nav="albums">
+      <svg class="i" viewBox="0 0 24 24"><rect x="3" y="7" width="14" height="14" rx="2"/><path d="M7 3h12a2 2 0 0 1 2 2v12"/></svg><span>Albümler</span>
+    </a>
+    <a class="tab" href="#/explore" data-nav="explore">
+      <svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m15.5 8.5-2 5-5 2 2-5z"/></svg><span>Keşfet</span>
+    </a>
+  </nav>
+
+  <button class="fab" id="addBtn" type="button">
+    <svg class="i" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+    <span id="fabLabel">Yeni albüm</span>
+  </button>
+  <input type="file" id="fileInput" accept="image/*" multiple hidden>
+
+  <div class="lightbox" id="lightbox" hidden>
+    <div class="lb-stage" id="lbStage">
+      <img id="lbImg" alt="" crossorigin="anonymous">
+    </div>
+    <button class="lb-nav prev" id="lbPrev" type="button" aria-label="Önceki">
+      <svg class="i" viewBox="0 0 24 24"><path d="m15 6-6 6 6 6"/></svg>
+    </button>
+    <button class="lb-nav next" id="lbNext" type="button" aria-label="Sonraki">
+      <svg class="i" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg>
+    </button>
+    <aside class="lb-info" id="lbInfo" hidden>
+      <button class="lb-album" id="lbAlbumLink" type="button">
+        <img id="lbAlbumCover" alt="" crossorigin="anonymous">
+        <span><small>Albüm</small><b id="lbAlbumName"></b></span>
+      </button>
+      <div class="tags" id="lbTags"></div>
+      <dl class="lb-facts">
+        <div><dt>Tema</dt><dd id="lbCategory"></dd></div>
+        <div><dt>Eklenme</dt><dd id="lbDate"></dd></div>
+        <div><dt>Çözünürlük</dt><dd id="lbDims"></dd></div>
+        <div><dt>Boyut</dt><dd id="lbSize"></dd></div>
+        <div><dt>Dosya</dt><dd id="lbFile"></dd></div>
+      </dl>
+      <button class="btn primary" id="lbGoAlbum" type="button">
+        Albüme git
+        <svg class="i" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg>
+      </button>
+    </aside>
+    <div class="lb-bar">
+      <span id="lbCaption"></span>
+      <div class="actions">
+        <button class="icon-btn" id="lbInfoBtn" type="button" title="Bilgiler" aria-label="Bilgiler">
+          <svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5"/><path d="M12 8h.01"/></svg>
+        </button>
+        <button class="icon-btn" id="lbMove" type="button" title="Albüme taşı" aria-label="Albüme taşı">
+          <svg class="i" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="m12 11 3 3-3 3"/><path d="M8 14h7"/></svg>
+        </button>
+        <button class="icon-btn" id="lbDownload" type="button" title="İndir" aria-label="İndir">
+          <svg class="i" viewBox="0 0 24 24"><path d="M12 4v11"/><path d="m7 10 5 5 5-5"/><path d="M5 20h14"/></svg>
+        </button>
+        <button class="icon-btn" id="lbDelete" type="button" title="Sil" aria-label="Sil">
+          <svg class="i" viewBox="0 0 24 24"><path d="M4 7h16"/><path d="M10 11v6M14 11v6"/><path d="M6 7l1 13h10l1-13"/><path d="M9 7V4h6v3"/></svg>
+        </button>
+        <button class="icon-btn" id="lbClose" type="button" title="Kapat" aria-label="Kapat">
+          <svg class="i" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <dialog id="albumDialog">
+    <form id="albumForm">
+      <h2 id="albumDialogTitle">Yeni albüm</h2>
+      <label class="field">Albüm adı
+        <input type="text" name="name" maxlength="40" autocomplete="off" required>
+      </label>
+      <label class="field">Tema
+        <input type="text" name="category" list="categoryOptions" maxlength="30" autocomplete="off" placeholder="ör. Portre, Tatil, Aile">
+      </label>
+      <datalist id="categoryOptions"></datalist>
+      <label class="field">Etiketler
+        <input type="text" name="tags" autocomplete="off" placeholder="yaz, deniz, arkadaşlar">
+      </label>
+      <p class="hint">Etiketleri virgülle ayır. Önceki etiketlerden seçmek için dokun:</p>
+      <div class="tags" id="tagSuggest"></div>
+      <div class="dialog-actions">
+        <button class="btn" type="button" id="albumCancel">Vazgeç</button>
+        <button class="btn primary" type="submit">Kaydet</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="pickDialog">
+    <form id="pickForm">
+      <h2 id="pickTitle">Hangi albüme?</h2>
+      <div class="pick-list" id="pickList"></div>
+      <div class="dialog-actions">
+        <button class="btn" type="button" id="pickCancel">Vazgeç</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="settings">
+    <form id="settingsForm">
+      <h2>Ayarlar</h2>
+      <p class="hint">Fotoğraflar GitHub reponun <code>photos/</code> klasöründe saklanır. Her cihazda bir kez token girmen yeterli.</p>
+      <div class="row">
+        <label class="field">Kullanıcı adı
+          <input type="text" name="owner" autocomplete="off" autocapitalize="off" spellcheck="false" required>
+        </label>
+        <label class="field">Repo
+          <input type="text" name="repo" autocomplete="off" autocapitalize="off" spellcheck="false" required>
+        </label>
+      </div>
+      <label class="field">Branch
+        <input type="text" name="branch" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="main">
+      </label>
+      <label class="field">GitHub token
+        <input type="password" name="token" autocomplete="off" placeholder="github_pat_…">
+      </label>
+      <p class="hint">
+        <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">Fine-grained token oluştur</a>:
+        sadece bu repoyu seç, <b>Contents → Read and write</b> izni ver. Token yalnızca bu cihazda saklanır.
+      </p>
+      <div class="dialog-actions">
+        <button class="btn" type="button" id="settingsCancel">Vazgeç</button>
+        <button class="btn primary" type="submit">Kaydet</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script>
+    if (location.protocol === 'file:') {
+      document.body.innerHTML = '<main><section class="empty"><img src="icons/icon.svg" alt="" width="88" height="88">'
+        + '<h2>Bu sayfa doğrudan açılamaz</h2><p>Klasördeki <b>start-local.bat</b> dosyasına çift tıkla,<br>'
+        + 'galeri tarayıcında kendiliğinden açılacak.</p></section></main>';
+    }
+  </script>
+  <script src="app.js" type="module"></script>
+</body>
+</html>
