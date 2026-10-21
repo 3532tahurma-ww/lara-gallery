@@ -274,5 +274,10 @@
         "kız"
       ]
     }
+  },
+  "photos": {
+    "photos/Bumble 1/1792436532327-xds2.jpg": {
+      "fav": true
+    }
   }
 }
