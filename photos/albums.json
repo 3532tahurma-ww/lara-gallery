@@ -275,5 +275,9 @@
       ]
     }
   },
-  "photos": {}
+  "photos": {
+    "photos/Clicker/1792332836181-gnpt.jpg": {
+      "fav": true
+    }
+  }
 }
